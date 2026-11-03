@@ -132,6 +132,12 @@ describe('PATCH /api/v1/devices/:id', () => {
     expect(next.json()).toMatchObject({ interval_s: 120, alert_max: 6 });
   });
 
+  it('keeps settings that were not part of the patch', async () => {
+    await app.inject({ method: 'PATCH', url: '/api/v1/devices/n1', headers: { authorization: ADMIN }, payload: { name: 'Fridge' } });
+    const d = (await app.inject('/api/v1/devices/n1')).json();
+    expect(d).toMatchObject({ name: 'Fridge', interval_s: 300, batch: 6, alert_min: 2, alert_max: 8 });
+  });
+
   it('rejects an inverted alert range', async () => {
     const res = await app.inject({ method: 'PATCH', url: '/api/v1/devices/n1', headers: { authorization: ADMIN }, payload: { alert_min: 9 } });
     expect(res.statusCode).toBe(400);
