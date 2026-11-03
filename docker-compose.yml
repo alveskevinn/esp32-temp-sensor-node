@@ -1,0 +1,33 @@
+# Local stack: Postgres + API/dashboard on http://localhost:3000
+#   docker compose up --build
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: iot
+      POSTGRES_PASSWORD: iot
+      POSTGRES_DB: iot
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "iot"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://iot:iot@db:5432/iot
+      INGEST_TOKEN: ${INGEST_TOKEN:-dev-ingest-token}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
+      FIRMWARE_DIR: /firmware
+    volumes:
+      - ./backend/firmware:/firmware:ro
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
