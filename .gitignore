@@ -1,0 +1,10 @@
+# Firmware (PlatformIO)
+firmware/.pio/
+firmware/.vscode/
+# Backend
+backend/node_modules/
+backend/dist/
+backend/.env
+backend/firmware/*.bin
+# OS
+.DS_Store
