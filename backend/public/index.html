@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Temperature nodes</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js" defer></script>
+  <style>
+    :root { --bg:#0f1115; --card:#181b22; --muted:#8a93a6; --text:#e7eaf0; --ok:#3fb950; --alert:#f85149; --stale:#d29922; --line:#58a6ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:20px 24px; display:flex; justify-content:space-between; align-items:baseline; }
+    h1 { font-size:18px; margin:0; }
+    .muted { color:var(--muted); }
+    main { padding:0 24px 24px; display:grid; gap:16px; grid-template-columns: minmax(260px, 340px) 1fr; }
+    @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+    .list { display:flex; flex-direction:column; gap:8px; }
+    .device { background:var(--card); border:1px solid transparent; border-radius:10px; padding:12px 14px; cursor:pointer; }
+    .device.active { border-color:var(--line); }
+    .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .temp { font-size:22px; font-weight:600; }
+    .pill { font-size:11px; padding:2px 8px; border-radius:999px; text-transform:uppercase; letter-spacing:.04em; }
+    .ok { background:#3fb95022; color:var(--ok); } .alert { background:#f8514922; color:var(--alert); }
+    .stale, .unknown { background:#d2992222; color:var(--stale); }
+    .panel { background:var(--card); border-radius:10px; padding:16px; min-height:360px; }
+    .empty { padding:40px; text-align:center; }
+    code { background:#ffffff10; padding:2px 6px; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Temperature nodes</h1>
+    <span class="muted" id="updated"></span>
+  </header>
+  <main>
+    <section class="list" id="devices"></section>
+    <section class="panel">
+      <div class="row"><strong id="title">—</strong><span class="muted" id="range"></span></div>
+      <canvas id="chart" height="140"></canvas>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let selected = new URLSearchParams(location.search).get('device'), chart = null;
+
+    const ago = (iso) => {
+      if (!iso) return 'never';
+      const s = Math.round((Date.now() - new Date(iso)) / 1000);
+      if (s < 90) return `${s}s ago`;
+      if (s < 5400) return `${Math.round(s / 60)} min ago`;
+      return `${Math.round(s / 3600)} h ago`;
+    };
+
+    function el(tag, attrs = {}, ...children) {
+      const node = Object.assign(document.createElement(tag), attrs);
+      node.append(...children);
+      return node;
+    }
+
+    async function loadDevices() {
+      const devices = await (await fetch('/api/v1/devices')).json();
+      const list = $('devices');
+      if (devices.length === 0) {
+        list.replaceChildren(el('div', { className: 'device empty muted' },
+          'No devices yet. Flash a node or run ', el('code', {}, 'npm run simulate'), '.'));
+        return;
+      }
+      if (!selected || !devices.some((d) => d.id === selected)) selected = devices[0].id;
+      list.replaceChildren(...devices.map((d) => {
+        const card = el('div', { className: 'device' + (d.id === selected ? ' active' : '') },
+          el('div', { className: 'row' },
+            el('strong', {}, d.name || d.id),
+            el('span', { className: `pill ${d.status}` }, d.status)),
+          el('div', { className: 'row' },
+            el('span', { className: 'temp' }, d.last_temp == null ? '—' : `${d.last_temp.toFixed(1)} °C`),
+            el('span', { className: 'muted' }, `🔋 ${d.battery_pct ?? '—'}% · ${ago(d.last_seen)}`)),
+          el('div', { className: 'muted' }, `range ${d.alert_min}…${d.alert_max} °C · every ${d.interval_s}s × ${d.batch}`));
+        card.onclick = () => { selected = d.id; refresh(); };
+        return card;
+      }));
+      return devices.find((d) => d.id === selected);
+    }
+
+    async function loadChart(device) {
+      if (!device || !window.Chart) return;
+      const from = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const rows = await (await fetch(`/api/v1/devices/${encodeURIComponent(device.id)}/readings?from=${from}&limit=2000`)).json();
+      $('title').textContent = device.name || device.id;
+      $('range').textContent = `last 24 h · ${rows.length} readings`;
+      const data = rows.map((r) => ({ x: r.ts, y: r.t }));
+      const band = (y) => rows.length ? [{ x: rows[0].ts, y }, { x: rows[rows.length - 1].ts, y }] : [];
+      const datasets = [
+        { label: 'Temperature (°C)', data, borderColor: '#58a6ff', pointRadius: 0, tension: 0.25 },
+        { label: 'Min', data: band(device.alert_min), borderColor: '#f8514966', borderDash: [6, 4], pointRadius: 0 },
+        { label: 'Max', data: band(device.alert_max), borderColor: '#f8514966', borderDash: [6, 4], pointRadius: 0 },
+      ];
+      if (chart) { chart.data.datasets = datasets; chart.update('none'); return; }
+      chart = new Chart($('chart'), {
+        type: 'line',
+        data: { datasets },
+        options: {
+          animation: false,
+          plugins: { legend: { labels: { color: '#8a93a6' } } },
+          scales: {
+            x: { type: 'time', ticks: { color: '#8a93a6' }, grid: { color: '#ffffff0d' } },
+            y: { ticks: { color: '#8a93a6' }, grid: { color: '#ffffff0d' } },
+          },
+        },
+      });
+    }
+
+    async function refresh() {
+      try {
+        const device = await loadDevices();
+        await loadChart(device);
+        $('updated').textContent = `updated ${new Date().toLocaleTimeString()}`;
+      } catch (e) {
+        $('updated').textContent = `offline: ${e.message}`;
+      }
+    }
+
+    window.addEventListener('load', () => { refresh(); setInterval(refresh, 30000); });
+  </script>
+</body>
+</html>
