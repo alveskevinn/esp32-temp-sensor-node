@@ -74,7 +74,10 @@ export class MemoryStore implements Store {
   async updateDevice(id: string, patch: Partial<DeviceSettings>): Promise<Device | null> {
     const d = this.devices.get(id);
     if (!d) return null;
-    Object.assign(d, patch);
+    // Only apply provided keys: `{ batch: undefined }` must not erase a setting.
+    for (const [key, value] of Object.entries(patch) as [keyof DeviceSettings, never][]) {
+      if (value !== undefined) d[key] = value;
+    }
     return { ...d };
   }
 
